@@ -1,47 +1,128 @@
 import streamlit as st
-import cv2
 import numpy as np
+import cv2
+import os
 from PIL import Image
 
-# Cargar el modelo de reconocimiento facial
-face_recognizer = cv2.face.LBPHFaceRecognizer_create()
-face_recognizer.read('modeloLBPHFace.xml')
+dataPath = 'D:/Universidad/6/Data' #Cambia a la ruta donde hayas almacenado Data
+imagePaths = os.listdir(dataPath)
+print('imagePaths=',imagePaths)
 
-# Función para realizar el reconocimiento facial en una imagen
-def reconocimiento_facial(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    faceClassif = cv2.CascadeClassifier(cv2.data.haarcascades+'haarcascade_frontalface_default.xml')
-    faces = faceClassif.detectMultiScale(gray, 1.3, 5)
+def load_model():
+    face_recognizer=cv2.face.LBPHFaceRecognizer_create()
+    face_recognizer.read('modeloLBPHFace.xml')
+    return face_recognizer
+face_recognizer=load_model()
+
+def load_image(image_file):
+    img = Image.open(image_file)
+    return img
+
+def detect_faces(image):
+    # Convert the image to a numpy array
+    image_np = np.array(image.convert('RGB'))
+    gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+    
+    # Load OpenCV pre-trained face detector model
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.CASCADE_SCALE_IMAGE)
+    return faces
+
+def draw_faces(image, faces,frame, only=False):
+
+    # Convert the image to a numpy array
+    image_np = np.array(image.convert('RGB'))
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    auxFrame = gray.copy()
+    
+
     for (x, y, w, h) in faces:
-        rostro = gray[y:y+h, x:x+w]
-        rostro = cv2.resize(rostro, (180, 180), interpolation=cv2.INTER_CUBIC)
-        result = face_recognizer.predict(rostro)
-        if result[1] < 70:
-            cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(image, str(result[0]), (x, y-25), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-        else:
-            cv2.rectangle(image, (x, y), (x+w, y+h), (0, 0, 255), 2)
-            cv2.putText(image, 'Desconocido', (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
-    return image
+            
+        if only:
+            cv2.rectangle(image_np, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        else:    
+            
+            rostro = auxFrame[y:y+h,x:x+w]
+            rostro = cv2.resize(rostro,(150,150),interpolation= cv2.INTER_CUBIC)
+            result = face_recognizer.predict(rostro)
 
-# Configurar la interfaz de Streamlit
-st.title("Aplicación de Reconocimiento Facial")
+            cv2.putText(image_np,'{}'.format(result),(x,y-5),1,1.3,(255,255,0),1,cv2.LINE_AA)
 
-option = st.radio("Selecciona una opción:", ("Cámara en Vivo", "Subir Imagen"))
+            if result[1] < 70:
+                cv2.putText(image_np,'{}'.format(imagePaths[result[0]]),(x,y-25),2,1.1,(0,255,0),1,cv2.LINE_AA)
+                cv2.rectangle(image_np, (x,y),(x+w,y+h),(0,255,0),2)
+            else:
+                cv2.putText(image_np,'Desconocido',(x,y-20),2,0.8,(0,0,255),1,cv2.LINE_AA)
+                cv2.rectangle(image_np, (x,y),(x+w,y+h),(0,0,255),2)
+    return image_np
 
-if option == "Cámara en Vivo":
+st.set_page_config(page_title="Reconocimiento Facial en Vivo", page_icon=":camera:", layout="wide")
+st.title("📸 Aplicación de Reconocimiento de Rostros en Vivo")
+
+st.sidebar.title("Opciones")
+image_source = st.sidebar.selectbox("Seleccione la fuente de la imagen", ["Subir Imagen", "Cámara en Vivo"])
+
+image = None
+stop_camera = False
+
+if "stop_camera" not in st.session_state:
+    st.session_state["stop_camera"] = False
+
+if "reset" not in st.session_state:
+    st.session_state["reset"] = False
+
+if image_source == "Subir Imagen":
+    image_file = st.sidebar.file_uploader("Cargue una imagen", type=["jpg", "jpeg", "png"])
+    if image_file is not None:
+        image = load_image(image_file)
+else:
+    st.write("### La cámara en vivo está activada. Por favor, espere un momento para que se muestre el video.")
+    stop_button = st.button("Detener Cámara")
+    if stop_button:
+        st.session_state["stop_camera"] = True
+
+    reset_button = st.button("Activar camara")
+    if reset_button:
+        st.session_state["reset"] = True
+        st.session_state["stop_camera"] = False
+        st.experimental_rerun()
+
     cap = cv2.VideoCapture(0)
-    while cap.isOpened():
+    frame_window = st.image([])
+
+    while not st.session_state["stop_camera"]:
         ret, frame = cap.read()
         if not ret:
-            st.error("No se puede acceder a la cámara.")
+            st.error("No se pudo acceder a la cámara")
             break
-        frame = reconocimiento_facial(frame)
-        st.image(frame, channels="BGR", caption="Cámara en Vivo")
+
+        # Convert the frame to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Detect faces
+        faces = detect_faces(Image.fromarray(frame))
+        
+        # Draw faces
+        frame_with_faces = draw_faces(Image.fromarray(frame), faces,frame)
+        
+        # Update the Streamlit image element
+        frame_window.image(frame_with_faces, channels="RGB")
+
+    cap.release()
+
+if image is not None:
+    st.image(image, caption='Imagen cargada', use_column_width=True)
+
+    # Detect faces
+    faces = detect_faces(image)
+    st.write(f"### Se detectaron {len(faces)} rostro(s) en la imagen.")
+
+    # Draw faces
+    if len(faces) > 0:
+        result_image = draw_faces(image, faces)
+        st.image(result_image, caption='Imagen con rostros detectados', use_column_width=True)
 else:
-    uploaded_file = st.file_uploader("Subir una imagen", type=["jpg", "png", "jpeg"])
-    if uploaded_file is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, 1)
-        image = reconocimiento_facial(image)
-        st.image(image, channels="BGR", caption="Imagen Cargada")
+    if image_source == "Subir Imagen":
+        st.write("### Por favor, cargue una imagen para detectar rostros.")
